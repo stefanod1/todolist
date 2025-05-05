@@ -1,70 +1,98 @@
 "use client"
 
 import { useState, useEffect } from "react"
-
-type Task = {
-  id: string
-  text: string
-  completed: boolean
-}
+import { Todo, todoService } from "@/lib/todo"
+import { cn } from "@/lib/utils"
 
 export default function TodoList() {
-  const [tasks, setTasks] = useState<Task[]>(() => {
-    // Load tasks from localStorage on initial render (client-side only)
-    if (typeof window !== "undefined") {
-      const savedTasks = localStorage.getItem("tasks")
-      return savedTasks ? JSON.parse(savedTasks) : []
-    }
-    return []
-  })
-
+  const [tasks, setTasks] = useState<Todo[]>([])
   const [newTaskText, setNewTaskText] = useState("")
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null)
   const [editingText, setEditingText] = useState("")
+  const [isLoading, setIsLoading] = useState(true)
 
-  // Save tasks to localStorage whenever they change
+  // Load tasks from Firebase
   useEffect(() => {
-    localStorage.setItem("tasks", JSON.stringify(tasks))
-  }, [tasks])
-
-  const addTask = () => {
-    if (newTaskText.trim() === "") return
-
-    const newTask: Task = {
-      id: Date.now().toString(),
-      text: newTaskText,
-      completed: false,
+    const loadTasks = async () => {
+      try {
+        const todos = await todoService.getTodos()
+        setTasks(todos)
+      } catch (error) {
+        console.error("Error loading tasks:", error)
+      } finally {
+        setIsLoading(false)
+      }
     }
 
-    setTasks([...tasks, newTask])
-    setNewTaskText("")
+    loadTasks()
+  }, [])
+
+  const addTask = async () => {
+    if (newTaskText.trim() === "") return
+
+    try {
+      const newTask = await todoService.createTodo(newTaskText)
+      setTasks([newTask, ...tasks])
+      setNewTaskText("")
+    } catch (error) {
+      console.error("Error adding task:", error)
+    }
   }
 
-  const deleteTask = (id: string) => {
-    setTasks(tasks.filter((task) => task.id !== id))
+  const deleteTask = async (id: string) => {
+    try {
+      await todoService.deleteTodo(id)
+      setTasks(tasks.filter((task) => task.id !== id))
+    } catch (error) {
+      console.error("Error deleting task:", error)
+    }
   }
 
-  const toggleTaskCompletion = (id: string) => {
-    setTasks(tasks.map((task) => (task.id === id ? { ...task, completed: !task.completed } : task)))
+  const toggleTaskCompletion = async (id: string) => {
+    try {
+      const task = tasks.find((t) => t.id === id)
+      if (!task) return
+
+      await todoService.updateTodo(id, { completed: !task.completed })
+      setTasks(tasks.map((task) => 
+        task.id === id ? { ...task, completed: !task.completed } : task
+      ))
+    } catch (error) {
+      console.error("Error updating task:", error)
+    }
   }
 
-  const startEditing = (task: Task) => {
+  const startEditing = (task: Todo) => {
     setEditingTaskId(task.id)
     setEditingText(task.text)
   }
 
-  const saveEdit = () => {
+  const saveEdit = async () => {
     if (editingTaskId === null) return
 
-    setTasks(tasks.map((task) => (task.id === editingTaskId ? { ...task, text: editingText } : task)))
-
-    setEditingTaskId(null)
-    setEditingText("")
+    try {
+      await todoService.updateTodo(editingTaskId, { text: editingText })
+      setTasks(tasks.map((task) => 
+        task.id === editingTaskId ? { ...task, text: editingText } : task
+      ))
+      setEditingTaskId(null)
+      setEditingText("")
+    } catch (error) {
+      console.error("Error updating task:", error)
+    }
   }
 
   const cancelEdit = () => {
     setEditingTaskId(null)
     setEditingText("")
+  }
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+      </div>
+    )
   }
 
   return (
@@ -88,7 +116,10 @@ export default function TodoList() {
             }}
             className="flex-grow border rounded p-2"
           />
-          <button onClick={addTask} className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600">
+          <button 
+            onClick={addTask} 
+            className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 transition-colors"
+          >
             Add
           </button>
         </div>
@@ -100,9 +131,10 @@ export default function TodoList() {
             tasks.map((task) => (
               <div
                 key={task.id}
-                className={`flex items-center gap-2 p-3 border rounded-lg ${
+                className={cn(
+                  "flex items-center gap-2 p-3 border rounded-lg transition-colors",
                   task.completed ? "bg-slate-50" : "bg-white"
-                }`}
+                )}
               >
                 <input
                   type="checkbox"
@@ -120,10 +152,16 @@ export default function TodoList() {
                       className="flex-grow border rounded p-1"
                       autoFocus
                     />
-                    <button onClick={saveEdit} className="bg-green-500 text-white px-2 py-1 rounded text-sm">
+                    <button 
+                      onClick={saveEdit} 
+                      className="bg-green-500 text-white px-2 py-1 rounded text-sm hover:bg-green-600 transition-colors"
+                    >
                       Save
                     </button>
-                    <button onClick={cancelEdit} className="bg-gray-300 px-2 py-1 rounded text-sm">
+                    <button 
+                      onClick={cancelEdit} 
+                      className="bg-gray-300 px-2 py-1 rounded text-sm hover:bg-gray-400 transition-colors"
+                    >
                       Cancel
                     </button>
                   </div>
@@ -131,7 +169,10 @@ export default function TodoList() {
                   <>
                     <label
                       htmlFor={`task-${task.id}`}
-                      className={`flex-grow cursor-pointer ${task.completed ? "line-through text-slate-500" : ""}`}
+                      className={cn(
+                        "flex-grow cursor-pointer",
+                        task.completed && "line-through text-slate-500"
+                      )}
                     >
                       {task.text}
                     </label>
@@ -139,11 +180,14 @@ export default function TodoList() {
                       <button
                         onClick={() => startEditing(task)}
                         disabled={task.completed}
-                        className="text-blue-500 p-1 disabled:text-gray-300"
+                        className="text-blue-500 p-1 disabled:text-gray-300 hover:text-blue-600 transition-colors"
                       >
                         Edit
                       </button>
-                      <button onClick={() => deleteTask(task.id)} className="text-red-500 p-1">
+                      <button 
+                        onClick={() => deleteTask(task.id)} 
+                        className="text-red-500 p-1 hover:text-red-600 transition-colors"
+                      >
                         Delete
                       </button>
                     </div>
